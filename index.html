@@ -633,6 +633,9 @@ function generateRound() {
 
   // Pick `count` words: prefer fresh, but fill with seen words until count is met.
   // `minSeen` forces at least N seen words to be mixed in (helps intersections).
+  // When fresh words exist, always guarantee at least one of them survives the
+  // pick — otherwise the final unseen word can be shuffled out of every round and
+  // the player can never reach 100% completion.
   // Always place the longest word first so vertical-only words anchor the grid.
   function pickWords(count, minSeen) {
     const freshShuf = shuffle(fresh);
@@ -650,9 +653,23 @@ function generateRound() {
       if (pool.length >= count) break;
       if (!pool.includes(w)) pool.push(w);
     }
-    const picked = shuffle(pool).slice(0, count);
+    let picked = shuffle(pool).slice(0, count);
+    // guarantee a fresh word stays in: if the slice dropped them all, swap one in
+    if (fresh.length && !picked.some(w => !seen.has(w.answer))) {
+      picked[picked.length - 1] = freshShuf[0];
+    }
     picked.sort((a, b) => b.answer.length - a.answer.length);
     return picked;
+  }
+
+  // Build a layout that is guaranteed to contain `anchor` by placing it first —
+  // the first word is the grid anchor and is always placeable, so it can never be
+  // silently dropped the way a later, non-intersecting word can.
+  function tryGenerateWithAnchor(anchor, others, count) {
+    const rest = shuffle(others.filter(w => w !== anchor)).slice(0, count - 1);
+    // anchor first; remaining words longest-first so long (vertical) words slot in early
+    rest.sort((a, b) => b.answer.length - a.answer.length);
+    return tryGenerate([anchor, ...rest]);
   }
 
   const targetCount = 4 + Math.floor(Math.random() * 2); // 4 or 5
@@ -683,7 +700,25 @@ function generateRound() {
     }
   }
 
-  // 4) last resort: any words from full pool
+  // 4) guaranteed-fresh fallback: anchor a fresh word so it cannot be dropped.
+  // Critical when only a few unseen words remain — a short non-intersecting word
+  // would otherwise never make it onto the board.
+  if (fresh.length) {
+    const others = WORD_POOL.filter(w => !fresh.includes(w));
+    for (const anchor of shuffle(fresh)) {
+      for (const ct of [4, 3, 2]) {
+        for (let attempt = 0; attempt < 30; attempt++) {
+          const layout = tryGenerateWithAnchor(anchor, others, ct);
+          if (layout) return layout;
+        }
+      }
+    }
+    // absolute last resort: the fresh word alone (always placeable as anchor)
+    const solo = tryGenerate([shuffle(fresh)[0]]);
+    if (solo) return solo;
+  }
+
+  // 5) last resort: any words from full pool
   for (let attempt = 0; attempt < 50; attempt++) {
     const picked = shuffle(WORD_POOL).slice(0, 3);
     picked.sort((a, b) => b.answer.length - a.answer.length);
